@@ -1,0 +1,42 @@
+# =====================
+# Dependencies
+# =====================
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# =====================
+# Environment variables (CRITICAL)
+# =====================
+.env
+server/.env
+client/.env
+
+# =====================
+# Logs
+# =====================
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# =====================
+# Build output
+# =====================
+dist/
+build/
+client/dist/
+client/build/
+
+# =====================
+# Coverage
+# =====================
+coverage/
+
+# =====================
+# Editor / OS files
+# =====================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
