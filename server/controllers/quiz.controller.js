@@ -129,7 +129,11 @@ const submitQuiz = asyncHandler(async(req,res)=>{
     const ratingChange = score > 5 ? 10 : -10
     
     await User.findByIdAndUpdate(req.user._id , {
-        $inc : {rating : score > 5 ? 10 : -10 }
+        $inc : {rating : score > 5 ? 10 : -10 ,
+                questionsSolved : correctCount,
+                totalAttempted : (correctCount + wrongCount),
+                contestsPlayed : 1
+            }
     },{new : true});
 
     return res.status(200)
