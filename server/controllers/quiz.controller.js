@@ -19,7 +19,7 @@ const getQuiz = asyncHandler(async(req , res)=>{
     }
 
     let maxLimit = 15
-    let safeLimit = Math.min(limit , maxLimit)
+    let safeLimit = Math.min(parseInt(limit) || 10, maxLimit)
     
     const matchStage = {
         category : category.toUpperCase()
@@ -52,9 +52,9 @@ const getQuiz = asyncHandler(async(req , res)=>{
 
     const questions = await Question.aggregate(pipeline)
     
-    // if(!questions || questions.length == 0){
-    //     throw new ApiError(400 , "No questions found for this category")
-    // }
+    if(!questions || questions.length == 0){
+        throw new ApiError(400 , "No questions found for this category")
+    }
 
     // send metaData 
     let timePerQuestion = 40
