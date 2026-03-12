@@ -1,10 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
-import Login from "./pages/login"
-import Register from "./pages/register"
+import Login from "./pages/Login"
+import Register from "./pages/Register"
 import Dashboard from "./pages/Dashboard"
-import Solo from "./pages/solo"
+import Solo from "./pages/Solo"
 import Battle from "./pages/Battle"
-import Leaderboard from "./pages/LeaderBoard"
+import Leaderboard from "./pages/Leaderboard"
 
 
 function App() {
