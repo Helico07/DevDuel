@@ -33,7 +33,8 @@ const matchMaking = (io , socket)=>{
                 questions : questionsForGrading ,
                 answerCount : { [opponent.userName] : 0 , [userName] : 0},
                 finishedFirst : null,
-                answers : {}
+                correctCount : { [opponent.userName] : 0 , [userName] : 0}
+                // answers : {}                   Will use later when build a review feature
             })
 
             io.to(roomId).emit("game:start" , {roomId , questions : questionsForPlayers ,  message : "Match found!"})
@@ -62,6 +63,7 @@ const matchMaking = (io , socket)=>{
         if(session.player1.userName == userName){
             if(correct){
                 session.player1.score += 10
+                session.correctCount[session.player1.userName]++;
             }
             else{
                 session.player1.score -= 5
@@ -71,6 +73,7 @@ const matchMaking = (io , socket)=>{
         else if (session.player2.userName == userName){
             if(correct){
                 session.player2.score += 10
+                session.correctCount[session.player2.userName]++;
             }
             else{
                 session.player2.score -= 5
@@ -98,15 +101,19 @@ const matchMaking = (io , socket)=>{
             const s = session
 
             let winner
+            let loser
             
             if(s.player1.score == s.player2.score){
                 winner = s.finishedFirst
+                loser = s.player1.userName == winner ? s.player2.userName : s.player1.userName
             }
             else if(s.player1.score > s.player2.score){
                 winner = s.player1.userName
+                loser = s.player2.userName
             }
             else{
                 winner = s.player2.userName
+                loser = s.player1.userName
             }
 
             
@@ -120,8 +127,12 @@ const matchMaking = (io , socket)=>{
             const winnerId = s.player1.userName == winner ? s.player1.userId : s.player2.userId
             const looserId = s.player1.userName == winner ? s.player2.userId : s.player1.userId
 
-            await User.findByIdAndUpdate( winnerId , { $inc : {rating : 10 , contestsPlayed : 1 , contestsWon : 1}})
-            await User.findByIdAndUpdate( looserId , { $inc : {rating : -10 , contestsPlayed : 1}})
+            await User.findByIdAndUpdate( winnerId , { $inc : {rating : 10 , contestsPlayed : 1 , contestsWon : 1 ,
+                                             totalAttempted : totalQuestions , questionsSolved : s.correctCount[winner]}
+                                        })
+            await User.findByIdAndUpdate( looserId , { $inc : {rating : -10 , contestsPlayed : 1 , totalAttempted : totalQuestions ,
+                                            questionsSolved : s.correctCount[loser]
+                                        }})
             
             io.to(roomId).emit("game:end" , {
                 winner ,

@@ -3,15 +3,15 @@ import { ApiError } from "../utils/ApiError.js"
 import { ApiResponse } from "../utils/ApiResponse.js"
 import { asyncHandler } from "../utils/AsyncHandler.js"
 
-const generateAccessAndRefreshToken = async(user_id)=>{
+const generateAccessAndRefreshToken = async(user)=>{
 
-    const tokenUser = await User.findById(user_id)
+    // const tokenUser = await User.findById(user_id)
     
-    const accessToken = tokenUser.generateAccessToken();
-    const refreshToken = tokenUser.generateRefreshToken();
+    const accessToken = user.generateAccessToken();
+    const refreshToken = user.generateRefreshToken();
     
-    tokenUser.refreshToken = refreshToken
-    await tokenUser.save({validateBeforeSave : false})
+    user.refreshToken = refreshToken
+    await user.save({validateBeforeSave : false})
     
     return {accessToken , refreshToken}
 }
@@ -50,7 +50,7 @@ const registerUser = asyncHandler(async(req , res)=>{
         throw new ApiError(500 , "User creation failed");
     }
 
-    const {accessToken , refreshToken} = await generateAccessAndRefreshToken(createdUser._id);
+    const {accessToken , refreshToken} = await generateAccessAndRefreshToken(createdUser);
 
     const options = {
         httpOnly : true,
@@ -84,7 +84,7 @@ const loginUser = asyncHandler(async(req,res)=>{
         throw new ApiError(401 , "Wrong Password")
     }
 
-    const {accessToken , refreshToken} = await generateAccessAndRefreshToken(existingUser._id)
+    const {accessToken , refreshToken} = await generateAccessAndRefreshToken(existingUser)
 
     const options = {
         httpOnly : true,
