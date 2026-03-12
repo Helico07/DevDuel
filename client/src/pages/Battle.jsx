@@ -19,7 +19,7 @@ export default function Battle() {
     const [timeLeft, setTimeLeft] = useState(90)
 
     useEffect(() => {
-        const socket = io("http://localhost:8000", { withCredentials: true })
+        const socket = io(import.meta.env.VITE_API_URL || "http://localhost:8000", { withCredentials: true })
         socketRef.current = socket
 
         socket.emit("queue:join", { userId: user._id, userName: user.userName })
