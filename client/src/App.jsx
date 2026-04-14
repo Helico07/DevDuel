@@ -1,25 +1,52 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
-import Login from "./pages/Login"
-import Register from "./pages/Register"
-import Dashboard from "./pages/Dashboard"
-import Solo from "./pages/Solo"
-import Battle from "./pages/Battle"
-import Leaderboard from "./pages/Leaderboard"
+import {BrowserRouter, Route, Routes} from 'react-router-dom'
+import Home from './pages/Home.jsx'
+import Leaderboard from './pages/Leaderboard.jsx'
+import Solo from './pages/Solo.jsx'
+import Login from './pages/Login.jsx'
+import Register from './pages/Register.jsx'
+import Battle from './pages/Battle.jsx'
+import Dashboard from './pages/Dashboard.jsx'
+import { useAuth } from './context/AuthContext'
+
+const App = () => {
 
 
-function App() {
+  const protectedRoute = ({children})=>{
+      const user = useAuth();
+      return user ? children : <Navigate to = {"/login"}/>
+  }
+
+
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Navigate to="/login" />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/solo" element={<Solo />} />
-        <Route path="/battle" element={<Battle />} />
-        <Route path="/leaderboard" element={<Leaderboard />} />
-      </Routes>
-    </BrowserRouter>
+    <div>
+      <BrowserRouter>
+
+        <Routes>
+
+          <Route path = {"/"}  element = {<Home/>}/>
+          <Route path = {"/leaderboard"} element = {<Leaderboard/>} />
+          <Route path = {"/login"} element = {<Login/>} />
+          <Route path = {"/register"} element = {<Register/>} />
+
+
+          {/* These routes should not be accessible path users who arent logged in*/}
+
+          <Route path = {"/dashboard"} element = {
+            <protectedRoute><Dashboard/></protectedRoute>
+          }/>
+
+          <Route path = {"/solo"} element = {
+            <protectedRoute><Solo/></protectedRoute>
+          } />
+
+          <Route path = {"/battle"} element = {
+            <protectedRoute><Battle/></protectedRoute>
+          }/>
+
+        </Routes>
+      
+      </BrowserRouter>
+    </div>
   )
 }
 

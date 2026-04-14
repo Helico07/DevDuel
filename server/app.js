@@ -8,6 +8,7 @@ import leaderBoardRouter from "./routes/leaderboard.routes.js"
 import { errorHandler } from "./middlewares/errorHandler.middleware.js";
 
 const app = express()
+app.set('trust proxy', 1)
 
 app.use(express.urlencoded({limit : "16kb" , extended : true}));
 app.use(express.json({limit : "16kb"}))
