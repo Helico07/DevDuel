@@ -16,6 +16,10 @@ const battleResultSchema = new Schema({
     },
     roomId : {
         type : String
+    },
+    isBot : {
+        type    : Boolean,
+        default : false
     }
 } , {timestamps : true })
 

@@ -52,7 +52,11 @@ const userSchema = new  Schema({
     },
     refreshToken : {
         type : String
-    }
+    },
+    ratingHistory : [{
+        elo  : { type: Number, required: true },
+        date : { type: Date,   default: Date.now }
+    }]
 } , {timestamps : true})
 
 userSchema.pre("save" , async function() {

@@ -3,7 +3,8 @@ import app from "./app.js"
 import connectDB from "./db/db.js"
 import { Server } from "socket.io"
 import { createServer } from "http"
-import { matchMaking } from "./socket/matchMaking.js"
+import { matchMaking }      from "./socket/matchMaking.js"
+import matchmakingWorker   from "./workers/matchmakingWorker.js"
 const PORT = process.env.PORT || 8000
 
 const httpServer = createServer(app)
@@ -28,8 +29,11 @@ io.on("connection" , (socket)=>{
 
 connectDB()
 .then(()=>{
-    httpServer.listen(PORT , ()=>{
+    httpServer.listen(PORT, () => {
         console.log(`Server is running at port ${PORT}`)
+        // Start the matchmaking heartbeat worker After the server is fully up.
+        // Passing io so the worker can emit game:start, score:update, game:end.
+        matchmakingWorker.start(io)
     })
 })
 .catch((err)=>{

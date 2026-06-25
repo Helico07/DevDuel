@@ -4,6 +4,7 @@ import { User } from "../models/user.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/AsyncHandler.js";
+import calculateEloChange from "../utils/elo.js";
 
 //  /api/v1/quiz/start?category=""&difficulty=""&limit=
 
@@ -116,39 +117,64 @@ const submitQuiz = asyncHandler(async(req,res)=>{
 
     })
 
-    const submission = await Submission.create({
-        userId : req.user._id,
-        category : category,
-        totalQuestions : answers.length,
-        score : score,
-        correctAnswers : correctCount,
-        wrongAnswers : wrongCount
-    });
+    // Fetch current user rating + games played for Elo formula
+    // Solo quiz uses a "ghost" opponent at the user's exact rating (Ea = 0.5)
+    // so the delta is purely based on score quality, not opponent gap.
+    // A passing score (>5) counts as a win; anything below counts as a loss.
+    const currentUser = await User.findById(req.user._id).select("rating contestsPlayed")
+    const didPass     = score > 5
 
-    // ratingChanges
-    const ratingChange = score > 5 ? 10 : -10
-    
-    await User.findByIdAndUpdate(req.user._id , {
-        $inc : {rating : score > 5 ? 10 : -10 ,
-                questionsSolved : correctCount,
-                totalAttempted : (correctCount + wrongCount),
-                contestsPlayed : 1
-            }
-    },{new : true});
-
-    return res.status(200)
-    .json( new ApiResponse(
-        200 , 
-        {score,
-        correctCount,
-        wrongCount,
-        total : answers.length,
-        submissionId : submission._id ,
-        ratingChange
-        }, 
-        "Quiz submitted successfully"
+    // Ghost opponent has same Elo as user → expected score = 0.5 for both
+    const { winnerDelta, loserDelta } = calculateEloChange(
+        didPass ? currentUser.rating : currentUser.rating,   // both same rating
+        didPass ? currentUser.rating : currentUser.rating,   // → Ea = 0.5 always
+        currentUser.contestsPlayed,
+        currentUser.contestsPlayed
     )
-)
+    const ratingChange  = didPass ? winnerDelta : -loserDelta
+    const newRating     = currentUser.rating + ratingChange
+
+    // Run submission create + user update in parallel — no dependency between them
+    const [submission] = await Promise.all([
+        Submission.create({
+            userId         : req.user._id,
+            category,
+            totalQuestions : answers.length,
+            score,
+            correctAnswers : correctCount,
+            wrongAnswers   : wrongCount
+        }),
+        User.findByIdAndUpdate(req.user._id, {
+            $inc  : {
+                rating          : ratingChange,
+                questionsSolved : correctCount,
+                totalAttempted  : correctCount + wrongCount,
+                contestsPlayed  : 1,
+                ...(didPass ? { contestsWon: 1 } : {})
+            },
+            // Push new Elo snapshot, keep only the last 50 entries
+            // $slice: -50 keeps the LAST 50 after push (most recent history)
+            $push : {
+                ratingHistory: {
+                    $each  : [{ elo: newRating, date: new Date() }],
+                    $slice : -50
+                }
+            }
+        })
+    ])
+
+    return res.status(200).json(new ApiResponse(
+        200,
+        {
+            score,
+            correctCount,
+            wrongCount,
+            total        : answers.length,
+            submissionId : submission._id,
+            ratingChange
+        },
+        "Quiz submitted successfully"
+    ))
 
 })
 

@@ -73,7 +73,80 @@ const getUserProfile = asyncHandler(async(req,res,next)=>{
 })
 
 
-export {getLeaderBoard,
-        getSubmissionHistory,
-        getUserProfile
-    }
+// ─── GET CATEGORY STATS ───────────────────────────────────────────────────────
+// Runs a single $facet aggregation on the Submission collection.
+// $facet executes multiple sub-pipelines on the SAME input documents in one
+// query pass — no N separate DB calls for N categories.
+//
+// Each sub-pipeline ($group) computes for one category:
+//   totalAttempted  → sum of all questions answered
+//   totalCorrect    → sum of correct answers
+//   accuracy        → (totalCorrect / totalAttempted) * 100
+//
+// The result is shaped into a clean { DSA: {...}, OS: {...} } map for the frontend.
+const getCategoryStats = asyncHandler(async (req, res) => {
+
+    const { userName } = req.params
+
+    const user = await User.findOne({ userName }).select("_id")
+    if (!user) throw new ApiError(404, "User not found")
+
+    const CATEGORIES = ["DSA", "OS", "DBMS", "CN", "OOPS"]
+
+    // Build one sub-pipeline per category inside $facet.
+    // Each pipeline: filter by category → group → compute stats.
+    const facetStages = {}
+    CATEGORIES.forEach(cat => {
+        facetStages[cat] = [
+            { $match: { category: cat } },
+            {
+                $group: {
+                    _id            : null,
+                    totalAttempted : { $sum: "$totalQuestions" },
+                    totalCorrect   : { $sum: "$correctAnswers" },
+                }
+            },
+            {
+                // Project accuracy as a rounded percentage.
+                // $cond guards against divide-by-zero when no submissions exist.
+                $project: {
+                    _id           : 0,
+                    totalAttempted: 1,
+                    totalCorrect  : 1,
+                    accuracy: {
+                        $cond: [
+                            { $gt: ["$totalAttempted", 0] },
+                            { $round: [{ $multiply: [{ $divide: ["$totalCorrect", "$totalAttempted"] }, 100] }, 1] },
+                            0
+                        ]
+                    }
+                }
+            }
+        ]
+    })
+
+    // Single aggregation call — one round trip to MongoDB for all 5 categories.
+    // $match first narrows to this user's submissions before $facet fans out.
+    const [raw] = await Submission.aggregate([
+        { $match: { userId: user._id } },
+        { $facet: facetStages }
+    ])
+
+    // Flatten: each facet returns an array (possibly empty). Take [0] or default.
+    const stats = {}
+    CATEGORIES.forEach(cat => {
+        stats[cat] = raw[cat][0] ?? { totalAttempted: 0, totalCorrect: 0, accuracy: 0 }
+    })
+
+    return res
+        .status(200)
+        .json(new ApiResponse(200, stats, "Category stats fetched successfully"))
+})
+
+
+export {
+    getLeaderBoard,
+    getSubmissionHistory,
+    getUserProfile,
+    getCategoryStats
+}

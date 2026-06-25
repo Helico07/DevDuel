@@ -1,151 +1,127 @@
-import { BattleResult } from "../models/battleResult.model.js"
-import {User} from '../models/user.model.js'
-import { Question } from "../models/question.model.js"
+import { User }            from "../models/user.model.js"
+import { enqueue,
+         removeBySocketId } from "../redis/queue.js"
+import { handleGameEnd }   from "../utils/gameEnd.js"
 
-let waitingQueue = []
+// ─── SHARED SESSION STORE ──────────────────────────────────────────────────────
+// activeSessions is the in-memory Map of all live game sessions.
+// Key   → roomId (string)
+// Value → session object (players, questions, scores, answerCount, etc.)
+//
+// Exported so the matchmaking worker can write new sessions into it,
+// and botEngine.js can read + update session state directly.
 let activeSessions = new Map()
 
-const matchMaking = (io , socket)=>{
 
-    socket.on("queue:join" , async({userId , userName})=>{
+// ─── MATCHMAKING SOCKET HANDLER ────────────────────────────────────────────────
+// Handles three socket events per connected player:
+//   1. queue:join    → enqueue the player into Redis (worker handles actual matching)
+//   2. answer:submit → grade an answer and check if the game is over
+//   3. disconnect    → evict ghost ticket from Redis if player was still in queue
 
-        if(waitingQueue.length > 0){
+const matchMaking = (io, socket) => {
 
-            const opponent = waitingQueue.shift()
+    // ── 1. QUEUE:JOIN ──────────────────────────────────────────────────────────
+    // Old behaviour: instant match attempt against waitingQueue array.
+    // New behaviour: fetch the player's current Elo from DB, build a ticket,
+    // push it into Redis Sorted Set, and wait for the heartbeat worker to match.
+    //
+    // Why fetch Elo from DB here instead of trusting client-sent data?
+    // The client cannot be trusted with its own rating — a player could send
+    // a fake high Elo to get matched against weaker opponents. Always read
+    // authoritative values from the database.
+    socket.on("queue:join", async ({ userId, userName }) => {
+        try {
+            const user = await User.findById(userId).select("rating")
+            if (!user) return socket.emit("queue:error", { message: "User not found" })
 
-            const roomId = `${userName}--vs--${opponent.userName}`
-
-            socket.join(roomId)
-            opponent.socket.join(roomId)
-
-            const questionsForPlayers = await Question.aggregate([
-                {$sample : {size : 10}},
-                {$project : {correctOption : 0 , __v : 0 , createdAt : 0 , updatedAt : 0}}
-            ])
-
-            const questionsForGrading = await Question.find({
-                _id : { $in : questionsForPlayers.map(q => q._id )}
-            }).select("correctOption")
-
-            activeSessions.set( roomId , {
-                player1 : {userId : opponent.userId , userName : opponent.userName , socketId : opponent.socket.id , score : 0},
-                player2 :  {userId , userName : userName , socketId : socket.id , score : 0},
-                questions : questionsForGrading ,
-                answerCount : { [opponent.userName] : 0 , [userName] : 0},
-                finishedFirst : null,
-                correctCount : { [opponent.userName] : 0 , [userName] : 0}
-                // answers : {}                   Will use later when build a review feature
+            await enqueue({
+                userId,
+                userName,
+                socketId: socket.id,
+                elo     : user.rating,
             })
 
-            io.to(roomId).emit("game:start" , {roomId , questions : questionsForPlayers ,  message : "Match found!"})
+            socket.emit("queue:waiting", { message: "Searching for an opponent..." })
 
+        } catch (err) {
+            console.error("queue:join error:", err.message)
+            socket.emit("queue:error", { message: "Failed to join queue. Please try again." })
         }
-        else{
-
-            waitingQueue.push({userId ,userName , socket})
-
-            socket.emit("queue:waiting" , {message : "Waiting for opponent..."})
-        }
-
     })
 
-    socket.on("answer:submit" , async ({roomId , questionId , chosenOption , userName})=>{
+
+    // ── 2. ANSWER:SUBMIT ───────────────────────────────────────────────────────
+    // Grades a submitted answer, updates session scores, and checks if both
+    // players have finished all questions.
+    // This handler is called for BOTH real vs real AND real vs bot matches.
+    // (The bot's own answers are handled inside botEngine.js, not here.)
+    socket.on("answer:submit", async ({ roomId, questionId, chosenOption, userName }) => {
 
         const session = activeSessions.get(roomId)
-        if(!session) return
+        if (!session) return  // session not found (already ended, or invalid roomId)
 
-        const question = session.questions.find( q => String(q._id) === String(questionId))
-        if(!question) return
+        const question = session.questions.find(q => String(q._id) === String(questionId))
+        if (!question) return  // unknown questionId — ignore (possible replay attack)
 
-        // finding if the question is answered correctly or not 
-        let correct =  (question.correctOption == chosenOption) 
+        const isCorrect = question.correctOption == chosenOption
 
-        if(session.player1.userName == userName){
-            if(correct){
-                session.player1.score += 10
-                session.correctCount[session.player1.userName]++;
-            }
-            else{
-                session.player1.score -= 5
-            }
-            session.answerCount[userName]++;
+        // Update score and correctCount for the submitting player
+        if (session.player1.userName === userName) {
+            session.player1.score += isCorrect ? 10 : -5
+            if (isCorrect) session.correctCount[session.player1.userName]++
+            session.answerCount[userName]++
+
+        } else if (session.player2.userName === userName) {
+            session.player2.score += isCorrect ? 10 : -5
+            if (isCorrect) session.correctCount[session.player2.userName]++
+            session.answerCount[userName]++
+
+        } else {
+            return  // userName doesn't belong to this session — ignore
         }
-        else if (session.player2.userName == userName){
-            if(correct){
-                session.player2.score += 10
-                session.correctCount[session.player2.userName]++;
-            }
-            else{
-                session.player2.score -= 5
-            }
-            session.answerCount[userName]++;
-        }
-        else{
-            return;
-        }
+
         const totalQuestions = session.questions.length
 
-        if(session.answerCount[userName] >= totalQuestions && !session.finishedFirst){
-                session.finishedFirst = userName
+        // Record who answered all questions first — used as tiebreaker if scores are equal
+        if (session.answerCount[userName] >= totalQuestions && !session.finishedFirst) {
+            session.finishedFirst = userName
         }
 
-        io.to(roomId).emit("score:update" , {
-            player1 : { userName : session.player1.userName , score : session.player1.score },
-            player2 : { userName : session.player2.userName , score : session.player2.score }
+        // Broadcast live score update to both players in the room
+        io.to(roomId).emit("score:update", {
+            player1: { userName: session.player1.userName, score: session.player1.score },
+            player2: { userName: session.player2.userName, score: session.player2.score }
         })
 
-        const bothFinished = session.answerCount[session.player1.userName] >= totalQuestions && session.answerCount[session.player2.userName] >= totalQuestions
+        // Game ends only when BOTH players have answered every question.
+        // For bot matches: if the bot hasn't finished yet, this will be false
+        // and the bot engine's own setTimeout will trigger handleGameEnd instead.
+        const bothFinished =
+            session.answerCount[session.player1.userName] >= totalQuestions &&
+            session.answerCount[session.player2.userName] >= totalQuestions
 
-        if(bothFinished){
+        if (bothFinished) {
+            // Real player finished last (or both finished simultaneously) → end game
+            await handleGameEnd({ session, roomId, io, activeSessions })
+        }
+    })
 
-            const s = session
 
-            let winner
-            let loser
-            
-            if(s.player1.score == s.player2.score){
-                winner = s.finishedFirst
-                loser = s.player1.userName == winner ? s.player2.userName : s.player1.userName
-            }
-            else if(s.player1.score > s.player2.score){
-                winner = s.player1.userName
-                loser = s.player2.userName
-            }
-            else{
-                winner = s.player2.userName
-                loser = s.player1.userName
-            }
-
-            
-            await BattleResult.create({
-                player1 : { userId : s.player1.userId , userName : s.player1.userName , score : s.player1.score },
-                player2 : { userId : s.player2.userId , userName : s.player2.userName , score : s.player2.score },
-                winner ,
-                roomId
-            })
-
-            const winnerId = s.player1.userName == winner ? s.player1.userId : s.player2.userId
-            const looserId = s.player1.userName == winner ? s.player2.userId : s.player1.userId
-
-            await User.findByIdAndUpdate( winnerId , { $inc : {rating : 10 , contestsPlayed : 1 , contestsWon : 1 ,
-                                             totalAttempted : totalQuestions , questionsSolved : s.correctCount[winner]}
-                                        })
-            await User.findByIdAndUpdate( looserId , { $inc : {rating : -10 , contestsPlayed : 1 , totalAttempted : totalQuestions ,
-                                            questionsSolved : s.correctCount[loser]
-                                        }})
-            
-            io.to(roomId).emit("game:end" , {
-                winner ,
-                player1 : { userName : s.player1.userName ,  score : s.player1.score},
-                player2 : { userName : s.player2.userName ,  score : s.player2.score },
-                ratingChanges : 10
-            }) 
-            
-            activeSessions.delete(roomId)
+    // ── 3. DISCONNECT ──────────────────────────────────────────────────────────
+    // Ghost ticket killer — if a player disconnects while waiting in the queue,
+    // their ticket must be removed from Redis immediately.
+    //
+    // Without this: the heartbeat worker sees their ticket, finds a match,
+    // emits game:start to a dead socket → the real opponent stares at a spinner forever.
+    socket.on("disconnect", async () => {
+        try {
+            await removeBySocketId(socket.id)
+        } catch (err) {
+            console.error("disconnect cleanup error:", err.message)
         }
     })
 }
 
-export {matchMaking,
-        activeSessions
-        }
+
+export { matchMaking, activeSessions }
