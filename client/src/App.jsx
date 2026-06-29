@@ -1,53 +1,90 @@
-import {BrowserRouter, Route, Routes} from 'react-router-dom'
-import Home from './pages/Home.jsx'
-import Leaderboard from './pages/Leaderboard.jsx'
-import Solo from './pages/Solo.jsx'
-import Login from './pages/Login.jsx'
-import Register from './pages/Register.jsx'
-import Battle from './pages/Battle.jsx'
-import Dashboard from './pages/Dashboard.jsx'
-import { useAuth } from './context/AuthContext'
+import { lazy, Suspense } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
 
-const App = () => {
+// Lazy-loaded pages
+const Home = lazy(() => import('./pages/Home'));
+const Login = lazy(() => import('./pages/Login'));
+const Register = lazy(() => import('./pages/Register'));
+const Leaderboard = lazy(() => import('./pages/Leaderboard'));
+const Profile = lazy(() => import('./pages/Profile'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Battle = lazy(() => import('./pages/Battle'));
+const Solo = lazy(() => import('./pages/Solo'));
 
-
-  const protectedRoute = ({children})=>{
-      const user = useAuth();
-      return user ? children : <Navigate to = {"/login"}/>
-  }
-
-
+// Full-screen loading spinner
+function PageLoader() {
   return (
-    <div>
-      <BrowserRouter>
-
-        <Routes>
-
-          <Route path = {"/"}  element = {<Home/>}/>
-          <Route path = {"/leaderboard"} element = {<Leaderboard/>} />
-          <Route path = {"/login"} element = {<Login/>} />
-          <Route path = {"/register"} element = {<Register/>} />
-
-
-          {/* These routes should not be accessible path users who arent logged in*/}
-
-          <Route path = {"/dashboard"} element = {
-            <protectedRoute><Dashboard/></protectedRoute>
-          }/>
-
-          <Route path = {"/solo"} element = {
-            <protectedRoute><Solo/></protectedRoute>
-          } />
-
-          <Route path = {"/battle"} element = {
-            <protectedRoute><Battle/></protectedRoute>
-          }/>
-
-        </Routes>
-      
-      </BrowserRouter>
+    <div className="min-h-screen bg-[#0B0D14] flex items-center justify-center">
+      <div className="flex flex-col items-center gap-4">
+        <div
+          className="w-10 h-10 rounded-full border-2 border-[#1E2435] border-t-[#8B5CF6] animate-spin"
+        />
+        <p className="text-gray-500 text-sm">Loading…</p>
+      </div>
     </div>
-  )
+  );
 }
 
-export default App
+// Protected route — waits for auth check, then redirects if unauthenticated
+function ProtectedRoute({ children }) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <PageLoader />;
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return children;
+}
+
+function AppRoutes() {
+  return (
+    <Suspense fallback={<PageLoader />}>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route path="/leaderboard" element={<Leaderboard />} />
+        <Route path="/profile/:userName" element={<Profile />} />
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/battle"
+          element={
+            <ProtectedRoute>
+              <Battle />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/solo"
+          element={
+            <ProtectedRoute>
+              <Solo />
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
+    </Suspense>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}
